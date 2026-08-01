@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use sysdll_core::diag::{run_diagnostics, Diagnostic};
+use sysdll_core::diag::{run_diagnostics as run_diagnostics_impl, Diagnostic};
 use sysdll_core::graph::DependencyGraph;
 use sysdll_core::scan::{ScanReport, ScanTarget};
 
@@ -30,7 +30,7 @@ pub fn run() {
             ping,
             is_admin,
             scan_targets,
-            run_diagnostics_cmd,
+            run_diagnostics,
             launch_cli,
             shutdown_cli,
             list_backups,
@@ -90,7 +90,7 @@ fn scan_targets(
 }
 
 #[tauri::command]
-fn run_diagnostics_cmd(
+fn run_diagnostics(
     state: tauri::State<'_, AppState>,
 ) -> AppResult<Vec<Diagnostic>> {
     let report_guard = state.last_report.lock().expect("last_report mutex poisoned");
@@ -101,7 +101,7 @@ fn run_diagnostics_cmd(
     let graph = graph_guard
         .as_ref()
         .ok_or_else(|| AppError::PreconditionFailed("no scan has been run yet".into()))?;
-    Ok(run_diagnostics(report, graph))
+    Ok(run_diagnostics_impl(report, graph))
 }
 
 /// Launch the elevated CLI child.
