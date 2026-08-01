@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "sysdll",
+  "productName": "SysDLL 修复工具",
   "version": "0.1.0",
   "identifier": "com.suyala.sysdll",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "sysdll",
+        "title": "SysDLL 修复工具",
         "width": 800,
         "height": 600
       }
