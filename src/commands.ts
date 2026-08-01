@@ -18,9 +18,11 @@ import type { ScanReport, Diagnostic, ScanTarget, BackupEntry } from '~/types/sy
  */
 export interface CommandMap {
   ping: Record<string, never>
+  is_admin: Record<string, never>
   scan_targets: { targets: ScanTarget[] }
   run_diagnostics: Record<string, never>
   launch_cli: Record<string, never>
+  shutdown_cli: Record<string, never>
   list_backups: Record<string, never>
   restore_backup: { target: string }
 }
@@ -29,9 +31,11 @@ export type CommandName = keyof CommandMap
 export type CommandArgs<C extends CommandName> = CommandMap[C]
 export type CommandResult<C extends CommandName> =
   C extends 'ping' ? string :
+  C extends 'is_admin' ? boolean :
   C extends 'scan_targets' ? ScanReport :
   C extends 'run_diagnostics' ? Diagnostic[] :
   C extends 'launch_cli' ? number :
+  C extends 'shutdown_cli' ? void :
   C extends 'list_backups' ? BackupEntry[] :
   C extends 'restore_backup' ? string :
   never

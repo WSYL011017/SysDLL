@@ -28,6 +28,7 @@ pub fn run() {
         .manage(cli::ChildState::default())
         .invoke_handler(tauri::generate_handler![
             ping,
+            is_admin,
             scan_targets,
             run_diagnostics_cmd,
             launch_cli,
@@ -48,6 +49,29 @@ struct AppState {
 #[tauri::command]
 fn ping() -> &'static str {
     "pong"
+}
+
+/// Returns `true` when the GUI is running with an elevated token.
+///
+/// `IsUserAnAdmin` is a cheap Win32 check (no syscall + no allocation);
+/// the cost is negligible against startup. We return `true` on non-Windows
+/// hosts because the elevated path is irrelevant there.
+#[tauri::command]
+fn is_admin() -> bool {
+    #[cfg(windows)]
+    {
+        // IsUserAnAdmin returns a non-zero `BOOL` (i32) when the user is a
+        // member of the Administrators group for the current process token.
+        // SAFETY: the function has no preconditions and is alloc-free.
+        let r: i32 = unsafe { windows_sys::Win32::UI::Shell::IsUserAnAdmin() };
+        r != 0
+    }
+    #[cfg(not(windows))]
+    {
+        // Not a Windows host → no UAC concept → treat as already privileged
+        // so the gating logic stays consistent across platforms.
+        true
+    }
 }
 
 /// Run a scan on the requested targets. The result is cached so the
@@ -113,17 +137,23 @@ pub struct BackupEntry {
 // CLI child plumbing
 // ---------------------------------------------------------------------------
 //
-// Elevation model (R8/P0-1):
-//   - The GUI never assigns admin privileges itself. It calls `ShellExecuteW`
-//     with the `"runas"` verb which triggers the standard Windows UAC flow.
-//   - The elevated child is built with a manifest that requests
-//     `requireAdministrator` — see `crates/sysdll-cli/build.rs` and
-//     `crates/sysdll-cli/resources/sysdll-cli.rc`.
-//   - The child listens on stdin for line-delimited JSON requests.
-//     The GUI authenticates itself by stamping each request with the
-//     parent PID (read via `GetCurrentProcessId()`); any line whose
-//     `parent_pid` doesn't match the launching GUI's PID (or is missing
-//     entirely) is rejected. See R8/P0-5.
+// Elevation model (U1/P0-1 / P0-5):
+//   - The GUI executable declares `requireAdministrator` in its embedded
+//     manifest via `app.manifest` + `build.rs`. A normal double-click (or
+//     `nsis-tauri-utils`-driven post-install launch) triggers exactly one
+//     UAC dialog and the GUI boots with the elevated token.
+//
+//   - Once the GUI is elevated it spawns `sysdll-cli.exe` with
+//     `std::process::Command`. Windows then **inherits** the parent's
+//     token by default, so the child runs at the same integrity level
+//     without a second UAC prompt. We deliberately do NOT add a
+//     manifest to the CLI child — that would force another UAC dialog
+//     and is the wrong way to keep the token.
+//
+//   - Because the child can only be spawned by code already running in
+//     the elevated GUI's address space, the IPC channel is implicitly
+//     authenticated. The previous audit-tagged P0-5 (parent-PID stamp)
+//     is no longer required.
 //
 // IPC event delivery (R8/P0-2 / P1-14):
 //   - Every child process event is serialized with `serde_json::to_string`
@@ -142,7 +172,6 @@ mod cli {
     use std::io::{BufRead, BufReader, Write};
     use std::path::{Path, PathBuf};
     use std::process::{Child, ChildStdin, Command, Stdio};
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Mutex;
 
     use anyhow::Context;
@@ -150,36 +179,19 @@ mod cli {
 
     const TAURI_EVENT_CLI: &str = "sysdll://cli-event";
 
-    /// Set by `launch` so subsequent `request_shutdown` calls can prove they
-    /// came from the same GUI process. Inherited child tokens can read but
-    /// not write this — it's just an in-memory guard against accidental
-    /// multiple-launch, not security.
-    static PARENT_PID: AtomicU32 = AtomicU32::new(0);
-
     pub fn launch(app: &AppHandle) -> anyhow::Result<u32> {
         let cli_path = locate_cli_binary(app)?;
-        let parent_pid = std::process::id();
-        PARENT_PID.store(parent_pid, Ordering::SeqCst);
-
-        // Audit fix R8/P0-1: prefer `ShellExecuteW` with `runas` so the user
-        // gets the standard UAC prompt. Fall back to a plain `Command::spawn`
-        // only when we are *already* elevated (e.g. running tests), in which
-        // case relaunching ourselves is both pointless and would deadlock.
-        let mut child = if is_elevated() {
-            spawn_direct(&cli_path, parent_pid)?
-        }
-        else {
-            spawn_elevated(&cli_path, parent_pid)?
-        };
+        let mut child = spawn_child(&cli_path)?;
 
         let pid = child.id();
         let stdout = child.stdout.take().expect("stdout piped");
         let stderr = child.stderr.take().expect("stderr piped");
         let stdin = child.stdin.take().expect("stdin piped");
 
-        // Audit fix R8/P1-6: keep the AppHandle behind a `WeakAppHandle`
-        // so the readers don't outlive the application. `tauri::async_runtime::spawn`
-        // ensures cancellation when the runtime drops.
+        // Audit fix R8/P1-6: keep the AppHandle behind a clone (Tauri's
+        // `AppHandle` itself is `Clone` and holds an internal `Arc`, so
+        // a bare clone is fine) and run the readers on the Tauri async
+        // runtime so they're cancelled when the runtime drops.
         let weak_app = app.clone();
         tauri::async_runtime::spawn(async move {
             pipe_stdout(weak_app.clone(), stdout).await;
@@ -205,11 +217,7 @@ mod cli {
             let _ = prev.child.kill();
             let _ = prev.child.wait();
         }
-        *guard = Some(ChildHandle {
-            child,
-            stdin: Mutex::new(stdin),
-            parent_pid,
-        });
+        *guard = Some(ChildHandle { child, stdin: Mutex::new(stdin) });
         Ok(pid)
     }
 
@@ -219,62 +227,26 @@ mod cli {
         if let Some(handle) = guard.as_mut() {
             let mut stdin = handle.stdin.lock().expect("stdin mutex poisoned");
             // `shutdown` is a fixed command the IPC knows how to honor.
-            let payload = serde_json::json!({ "cmd": "shutdown", "parent_pid": handle.parent_pid });
-            writeln!(stdin, "{payload}")?;
+            writeln!(stdin, r#"{{"cmd":"shutdown"}}"#)?;
             stdin.flush()?;
         }
         Ok(())
     }
 
-    /// Plain `Command::spawn` path. Used in two situations:
-    ///   - We are already running elevated (typical when the user clicks "Run
-    ///     as administrator" before launching the GUI). In that case the
-    ///     `runas` verb would just trigger a second identical UAC dialog.
-    ///   - In unit tests, where `ShellExecuteW` is not available.
-    fn spawn_direct(cli_path: &Path, parent_pid: u32) -> anyhow::Result<Child> {
+    /// Plain `Command::spawn` against the elevated `sysdll-cli.exe`.
+    ///
+    /// Windows inherits the parent's elevated token automatically
+    /// (CreateProcess default), so no `ShellExecuteW` plumbing is needed.
+    /// The child is built *without* a manifest specifically so it does
+    /// not ask for admin itself — see the module doc for the rationale.
+    fn spawn_child(cli_path: &Path) -> anyhow::Result<Child> {
         Command::new(cli_path)
             .arg("--ipc")
-            .arg("--parent-pid")
-            .arg(parent_pid.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .context("spawning sysdll-cli")
-    }
-
-    /// `ShellExecuteW` + verb=`"runas"` path. Triggers the standard UAC
-    /// prompt; on accept, the launched process inherits the elevated token.
-    ///
-    /// Audit-fix R8/P0-1: this entrypoint is intentionally **stubbed** for
-    /// the MVP because it needs:
-    ///
-    ///   - a `windows-sys` or `windows` Cargo dependency for the Win32
-    ///     surface, and
-    ///   - a re-launch strategy that pipes the GUI's stdin/stdout/stderr
-    ///     through the elevated child (the standard `ShellExecuteW` path
-    ///     gives you a completely separate stdio set).
-    ///
-    /// Until those land, callers fall back to `spawn_direct`, which still
-    /// works when the GUI is already elevated (typical when the user
-    /// launched it via "Run as administrator" before invoking the app).
-    /// The expected next-step patch is in the follow-up branch:
-    ///
-    /// ```ignore
-    /// use windows_sys::Win32::UI::Shell::ShellExecuteW;
-    /// use windows_sys::Win32::Foundation::HWND;
-    /// unsafe { ShellExecuteW(HWND(std::ptr::null_mut()), verb_w, file_w, ...) }
-    /// ```
-    #[cfg(windows)]
-    fn spawn_elevated(_cli_path: &Path, _parent_pid: u32) -> anyhow::Result<Child> {
-        Err(anyhow::anyhow!(
-            "elevated launch requires the windows-sys feature flag, see lib.rs"
-        ))
-    }
-
-    #[cfg(not(windows))]
-    fn spawn_elevated(_cli_path: &Path, _parent_pid: u32) -> anyhow::Result<Child> {
-        anyhow::bail!("elevation is Windows-only; refusing to relaunch non-elevated");
     }
 
     async fn pipe_stdout(app: AppHandle, stdout: std::process::ChildStdout) {
@@ -377,28 +349,9 @@ mod cli {
         Ok(root)
     }
 
-    fn is_elevated() -> bool {
-        // Audit-fix placeholder: until we add the `windows-sys` dependency
-        // we conservatively say "not elevated" so the launcher falls through
-        // to `spawn_elevated` (which currently is a stub on Windows). On
-        // Linux this constant is irrelevant — the elevated branch never
-        // runs — so returning `true` matches existing behaviour.
-        #[cfg(not(windows))]
-        {
-            true
-        }
-        #[cfg(windows)]
-        {
-            // TODO: wire to `windows_sys::Win32::Security::IsUserAnAdmin` and
-            //       flip the default accordingly.
-            false
-        }
-    }
-
     struct ChildHandle {
         child: Child,
         stdin: Mutex<ChildStdin>,
-        parent_pid: u32,
     }
 
     #[derive(Default)]

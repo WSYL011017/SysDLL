@@ -20,9 +20,6 @@ pub enum AppError {
     /// A required predecessor step has not been completed yet.
     /// e.g. `restore_backup` before any `backup`.
     PreconditionFailed(String),
-    /// Raised when the elevated CLI child can be found / spawned but
-    /// has not advertised the expected manifest.
-    ElevationMissing(String),
     /// Everything else, including unexpected `anyhow::Error`s.
     Other(String),
 }
@@ -43,7 +40,6 @@ impl std::fmt::Display for AppError {
             AppError::Io(m) => write!(f, "io: {m}"),
             AppError::InvalidPath(m) => write!(f, "invalid path: {m}"),
             AppError::PreconditionFailed(m) => write!(f, "precondition: {m}"),
-            AppError::ElevationMissing(m) => write!(f, "elevation missing: {m}"),
             AppError::Other(m) => write!(f, "{m}"),
         }
     }

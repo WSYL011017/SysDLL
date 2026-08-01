@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Application manifest for the SysDll GUI.
+
+  We mark the executable as `requireAdministrator` so that, when launched
+  from Explorer / NSIS / `cmd`, Windows triggers a one-time UAC prompt and
+  the process boots with the standard elevated token.
+
+  Once the GUI is elevated, the `sysdll-cli.exe` child is `Command::spawn`'d
+  from inside the elevated process so it inherits the parent's token by
+  default. The child is built without this manifest, which means:
+    - the child does not trigger a second UAC dialog,
+    - the child runs at the same integrity level as its parent,
+    - the `stdin` / `stdout` / `stderr` plumbing is a normal parent/child
+      pipe pair rather than an inter-session channel.
+
+  Note for developers:
+    `tauri dev` keeps the debug build manifest-free, otherwise the IDE
+    shell would itself need to be elevated. See `build.rs`.
+
+  See audit fixes P0-1 / P0-5 — moving from "elevate on demand" to
+  "elevate at startup" removes the need for any IPC parent-PID attestation.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <!--
+    Common Controls v6: required if the GUI ever uses Tauri dialogs
+    (TaskDialogIndirect on Vista+). Including it by default keeps the option
+    open without a follow-up rebuild.
+  -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel
+          level="requireAdministrator"
+          uiAccess="false"
+        />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>

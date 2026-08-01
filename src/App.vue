@@ -19,6 +19,20 @@ useDark()
 const scanStore = useScanStore()
 const repairStore = useRepairStore()
 const selected = ref<string | null>(null)
+const isAdmin = ref<boolean | null>(null)
+
+// Audit-fix U3: ask the back-end once at startup whether the GUI process
+// has an admin token. In release builds the manifest guarantees a `true`
+// answer (after the user accepts the UAC prompt). In dev builds, or when
+// `npm run dev` is launched from a non-elevated terminal, the answer is
+// `false` and we surface a yellow banner so the user knows that
+// repairs won't actually be able to write to `C:\Windows\System32`.
+const isAdminCmd = useTauriCommand('is_admin')
+isAdminCmd.run({}).then((r) => {
+  if (r !== null) isAdmin.value = r
+}).catch(() => {
+  isAdmin.value = false
+})
 
 useCliStream((evt) => {
   repairStore.appendLog(evt)
@@ -67,6 +81,25 @@ const showProgress = computed(() => scanStore.scanning || scanStore.progress.tot
 
 <template>
   <div class="h-full flex flex-col bg-base text-base">
+    <!--
+      Admin-status banner. Audit-fix U3:
+      - `null` is the loading state — we haven't heard back from Rust
+        yet and don't want to flap.
+      - `false` means the GUI is running at medium integrity. Dev builds
+        and any "double-click SysDLL.exe from Explorer" path should land
+        on `true` after the manifest-driven UAC prompt.
+      - Repairs are blocked while `false`.
+    -->
+    <div
+      v-if="isAdmin === false"
+      class="bg-yellow-500/10 border-b border-yellow-500/30 text-yellow-700 dark:text-yellow-300 px-4 py-2 text-xs flex items-center gap-2"
+    >
+      <div class="i-ph-warning-duotone text-base" />
+      <span>
+        当前未以管理员身份运行 — 修复功能将被系统拒绝。
+        请右键 → <b>以管理员身份运行</b>，或重新打包发布版让 manifest 帮你请求提权。
+      </span>
+    </div>
     <header class="border-b border-base px-4 py-2 flex items-center justify-between">
       <div class="flex items-center gap-3">
         <div class="i-ph-stack-duotone text-primary-600 text-xl" />
@@ -89,6 +122,8 @@ const showProgress = computed(() => scanStore.scanning || scanStore.progress.tot
         <button
           v-if="!repairStore.cliRunning"
           class="btn-primary"
+          :disabled="isAdmin === false"
+          :title="isAdmin === false ? '请以管理员身份运行' : ''"
           @click="startRepair"
         >
           <div class="i-ph-shield-check-duotone" />
