@@ -2,12 +2,13 @@
 import { ref } from 'vue'
 import { useScanStore } from '~/stores/scan'
 import type { ScanTarget } from '~/types/sysdll'
+import { t } from '~/i18n/zh-CN'
 
 const emit = defineEmits<{ scan: [targets: ScanTarget[]] }>()
 
 const scanStore = useScanStore()
 
-// MVP default: the two Windows system DLL directories. Users can add custom paths.
+// MVP 默认目标：Windows 两个系统 DLL 目录。用户可追加自定义路径。
 const defaultTargets: ScanTarget[] = [
   { path: 'C:\\Windows\\System32', recursive: true },
   { path: 'C:\\Windows\\SysWOW64', recursive: true },
@@ -32,30 +33,30 @@ function startScan() {
   <div class="flex flex-col gap-4">
     <section>
       <h2 class="text-xs uppercase tracking-wide color-mute mb-2">
-        Default targets
+        {{ t.scanPicker.defaultTargets }}
       </h2>
       <ul class="flex flex-col gap-1 mono text-xs">
         <li
-          v-for="t in defaultTargets"
-          :key="t.path"
+          v-for="dt in defaultTargets"
+          :key="dt.path"
           class="flex items-center gap-2 px-2 py-1 rounded bg-secondary"
         >
           <div class="i-ph-folder-duotone text-primary-600" />
-          <span class="truncate flex-1" :title="t.path">{{ t.path }}</span>
-          <span class="color-mute">recursive</span>
+          <span class="truncate flex-1" :title="dt.path">{{ dt.path }}</span>
+          <span class="color-mute">{{ t.scanPicker.recursiveTag }}</span>
         </li>
       </ul>
     </section>
 
     <section>
       <h2 class="text-xs uppercase tracking-wide color-mute mb-2">
-        Extra paths (one per line)
+        {{ t.scanPicker.extraPathsHeading }}
       </h2>
       <textarea
         v-model="extraPaths"
         rows="4"
         class="w-full mono text-xs p-2 rounded border border-base bg-base focus:outline-none focus:border-active resize-y"
-        placeholder="C:\Program Files\MyApp"
+        :placeholder="t.scanPicker.extraPathsPlaceholder"
       />
     </section>
 
@@ -66,17 +67,17 @@ function startScan() {
     >
       <div v-if="scanStore.scanning" class="i-ph-spinner-gap-duotone animate-spin" />
       <div v-else class="i-play_circle-fill-duotone" />
-      {{ scanStore.scanning ? 'Scanning…' : 'Run scan' }}
+      {{ scanStore.scanning ? t.scanPicker.scanning : t.scanPicker.runScan }}
     </button>
 
     <div v-if="scanStore.report" class="text-xs color-mute mono leading-relaxed">
       <div>
-        scanned: <span class="color-base">{{ scanStore.report.total_files }}</span>
-        parsed: <span class="color-base">{{ scanStore.report.parsed_files }}</span>
-        failed: <span class="color-base">{{ scanStore.report.failed_files }}</span>
+        {{ t.scanPicker.statScanned }}: <span class="color-base">{{ scanStore.report.total_files }}</span>
+        {{ t.scanPicker.statParsed }}: <span class="color-base">{{ scanStore.report.parsed_files }}</span>
+        {{ t.scanPicker.statFailed }}: <span class="color-base">{{ scanStore.report.failed_files }}</span>
       </div>
       <div>
-        duration: <span class="color-base">{{ scanStore.report.duration_ms }} ms</span>
+        {{ t.scanPicker.statDuration }}: <span class="color-base">{{ scanStore.report.duration_ms }} {{ t.scanPicker.statMs }}</span>
       </div>
       <div v-if="scanStore.scanError" class="text-red-500 mt-2">
         {{ scanStore.scanError }}

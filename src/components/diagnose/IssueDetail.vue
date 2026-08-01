@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Diagnostic } from '~/types/sysdll'
+import { t } from '~/i18n/zh-CN'
 
 const props = defineProps<{
   diagnostic: Diagnostic
@@ -24,7 +25,7 @@ const overflow = computed(() => Math.max(0, props.diagnostic.dependents.length -
         class="px-2 py-0.5 text-xs uppercase rounded border"
         :class="SEVERITY_BADGE[diagnostic.severity]"
       >
-        {{ diagnostic.severity }}
+        {{ t.severity[diagnostic.severity] }}
       </span>
       <div class="flex-1 min-w-0">
         <h2 class="text-base font-semibold">
@@ -38,7 +39,7 @@ const overflow = computed(() => Math.max(0, props.diagnostic.dependents.length -
 
     <section>
       <h3 class="text-xs uppercase tracking-wide color-mute mb-1">
-        Subject
+        {{ t.issueDetail.subject }}
       </h3>
       <div class="mono text-sm px-3 py-2 rounded bg-secondary break-all">
         {{ diagnostic.subject }}
@@ -47,7 +48,7 @@ const overflow = computed(() => Math.max(0, props.diagnostic.dependents.length -
 
     <section v-if="diagnostic.related_paths.length">
       <h3 class="text-xs uppercase tracking-wide color-mute mb-1">
-        Related files
+        {{ t.issueDetail.relatedFiles }}
       </h3>
       <ul class="flex flex-col gap-1">
         <li
@@ -63,7 +64,7 @@ const overflow = computed(() => Math.max(0, props.diagnostic.dependents.length -
 
     <section v-if="dependents.length">
       <h3 class="text-xs uppercase tracking-wide color-mute mb-1">
-        Dependents
+        {{ t.issueDetail.dependents }}
       </h3>
       <div class="flex flex-wrap gap-1.5">
         <span
@@ -74,7 +75,7 @@ const overflow = computed(() => Math.max(0, props.diagnostic.dependents.length -
           {{ dep }}
         </span>
         <span v-if="overflow" class="text-xs color-mute">
-          +{{ overflow }} more
+          {{ t.issueDetail.moreDependents(overflow) }}
         </span>
       </div>
     </section>
@@ -82,11 +83,11 @@ const overflow = computed(() => Math.max(0, props.diagnostic.dependents.length -
     <section class="border-t border-base pt-3 flex gap-2">
       <button class="btn-action" disabled>
         <div class="i-ph-download-simple-duotone" />
-        Download from Microsoft
+        {{ t.issueDetail.downloadMicrosoft }}
       </button>
       <button class="btn-action" disabled>
         <div class="i-ph-floppy-disk-back-duotone" />
-        Restore from backup
+        {{ t.issueDetail.restoreBackup }}
       </button>
     </section>
   </div>

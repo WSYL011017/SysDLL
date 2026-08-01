@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useScanStore } from '~/stores/scan'
+import { t } from '~/i18n/zh-CN'
 
 const scanStore = useScanStore()
 
@@ -14,7 +15,7 @@ const percent = computed(() => {
 <template>
   <div class="flex flex-col gap-1">
     <div class="text-xs color-mute mono flex justify-between">
-      <span>scanning {{ scanStore.progress.scanned }} / {{ scanStore.progress.total }}</span>
+      <span>{{ t.scanProgress.scanning(scanStore.progress.scanned, scanStore.progress.total) }}</span>
       <span>{{ percent }}%</span>
     </div>
     <div class="h-1 bg-secondary rounded overflow-hidden">

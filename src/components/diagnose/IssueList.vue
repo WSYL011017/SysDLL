@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Diagnostic, Severity } from '~/types/sysdll'
+import { t } from '~/i18n/zh-CN'
 
 defineProps<{
   diagnostics: Diagnostic[]
@@ -17,6 +18,7 @@ const SEVERITY_COLOR: Record<Severity, string> = {
   info: 'bg-blue-500',
 }
 
+// data contract stays English; render label is localized via t.kind
 const KIND_ICON: Record<Diagnostic['kind'], string> = {
   missing_dll: 'i-ph-warning-circle-duotone text-red-500',
   orphan_dll: 'i-ph-question-duotone text-blue-500',
@@ -46,13 +48,13 @@ const KIND_ICON: Record<Diagnostic['kind'], string> = {
             {{ d.detail }}
           </div>
           <div v-if="d.dependents.length" class="text-xs color-mute mono mt-1">
-            → affects {{ d.dependents.length }} module(s)
+            · {{ t.issueList.affects(d.dependents.length) }}
           </div>
         </div>
       </div>
     </li>
   </ul>
   <div v-if="!diagnostics.length" class="p-6 text-center color-mute text-sm">
-    No issues yet. Run a scan to begin.
+    {{ t.issueList.emptyHint }}
   </div>
 </template>

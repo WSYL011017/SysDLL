@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue'
 import type { LogLine } from '~/stores/repair'
+import { t } from '~/i18n/zh-CN'
 
 const props = defineProps<{
   lines: LogLine[]
@@ -27,7 +28,7 @@ watch(text, async () => {
     ref="container"
     class="flex-1 overflow-auto bg-#0a0a0a dark:bg-#0a0a0a text-#cdd6f4 font-mono text-xs leading-relaxed p-3 whitespace-pre-wrap"
   >
-    <span v-if="!lines.length" class="color-mute">No activity yet.</span>
+    <span v-if="!lines.length" class="color-mute">{{ t.repairLog.emptyHint }}</span>
     <span
       v-for="(line, i) in lines"
       :key="i"
