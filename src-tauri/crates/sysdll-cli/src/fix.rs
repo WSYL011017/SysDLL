@@ -1,15 +1,19 @@
 //! Repair operations: copy a known-good DLL into the system tree.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::backup::{backup_for, restore_latest};
+use crate::backup::backup_for;
 
 /// Install `source` at `target`, backing up any existing file first.
-/// Returns the path to the backup.
-pub fn install(source: &Path, target: &Path) -> Result<std::path::PathBuf> {
+///
+/// Audit fix P3-2: returning `PathBuf::new()` for "no existing file" made
+/// the front-end unable to tell "fixed without backup" from "fix failed
+/// before any copy". We now return `Option<PathBuf>` so missing backups
+/// stay distinguishable at the IPC boundary.
+pub fn install(source: &Path, target: &Path) -> Result<Option<PathBuf>> {
     if !source.exists() {
         anyhow::bail!("source file does not exist: {}", source.display());
     }
@@ -22,16 +26,10 @@ pub fn install(source: &Path, target: &Path) -> Result<std::path::PathBuf> {
             .with_context(|| format!("backing up {} -> {}", target.display(), backup.display()))?;
         fs::copy(source, target)
             .with_context(|| format!("installing {} -> {}", source.display(), target.display()))?;
-        Ok(backup)
+        Ok(Some(backup))
     } else {
         fs::copy(source, target)
             .with_context(|| format!("installing {} -> {}", source.display(), target.display()))?;
-        Ok(std::path::PathBuf::new())
+        Ok(None)
     }
-}
-
-#[allow(dead_code)]
-fn _silence(_: &Path) -> Result<()> {
-    let _ = restore_latest;
-    Ok(())
 }

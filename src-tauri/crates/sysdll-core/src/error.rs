@@ -12,9 +12,6 @@ pub enum Error {
 
     #[error("walk error: {0}")]
     Walk(String),
-
-    #[error("invalid utf-8 in path: {0}")]
-    Path(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

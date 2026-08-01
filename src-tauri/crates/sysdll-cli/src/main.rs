@@ -94,7 +94,10 @@ fn run_cli(cmd: Command) -> anyhow::Result<()> {
         }
         Command::Fix { target, source } => {
             let backup = fix::install(&source, &target)?;
-            println!("Installed {} (backup: {})", target.display(), backup.display());
+            match backup {
+                Some(b) => println!("Installed {} (backup: {})", target.display(), b.display()),
+                None => println!("Installed {} (no previous file to back up)", target.display()),
+            }
         }
         Command::RestoreBackup { target } => {
             let restored = backup::restore_latest(&target)?;
@@ -143,9 +146,16 @@ fn run_ipc() -> anyhow::Result<()> {
             Request::Fix { target, source } => {
                 ipc::send(&mut out, &Event::Log { level: "info".into(), message: format!("installing {} <- {}", target.display(), source.display()) })?;
                 match fix::install(&source, &target) {
-                    Ok(backup) => ipc::send(&mut out, &Event::FixDone {
+                    Ok(Some(backup)) => ipc::send(&mut out, &Event::FixDone {
                         target: target.display().to_string(),
                         backup: backup.display().to_string(),
+                    })?,
+                    Ok(None) => ipc::send(&mut out, &Event::FixDone {
+                        target: target.display().to_string(),
+                        // Empty string signals "no previous file existed"
+                        // (audit fix P3-2). The front-end renders this as
+                        // "installed without backup".
+                        backup: String::new(),
                     })?,
                     Err(err) => ipc::send(&mut out, &Event::Error { message: err.to_string() })?,
                 }

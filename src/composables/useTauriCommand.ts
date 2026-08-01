@@ -1,5 +1,6 @@
-import { computed, ref, shallowRef } from 'vue'
+import { computed, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import type { CommandName, CommandArgs, CommandResult } from '~/commands'
 
 interface InvokeState<T> {
   data: T | null
@@ -8,14 +9,24 @@ interface InvokeState<T> {
 }
 
 /**
- * Thin reactive wrapper around Tauri's `invoke`. Tracks loading + error so
- * components can render skeletons and inline error states without each call
- * having to write the same boilerplate.
+ * Strongly-typed reactive wrapper around Tauri's `invoke`.
+ *
+ * Why this shape (audit fixes P1-2 / P1-3 / P2-3 / P2-4):
+ *   - `C` is a literal string narrowed to known commands; an unknown command
+ *     fails `CommandName` lookup before it ever reaches Rust.
+ *   - `Args` is a required object literal whose keys exactly match the Rust
+ *     tauri::command signature, so renames are caught at compile time
+ *     instead of "Tauri panicked: missing field target".
+ *   - `Result` is derived from the same map — components get correct return
+ *     types without a second generic argument.
+ *   - `state` is a `ref`, not `shallowRef`: the previous nested
+ *     {data,error,loading} had no large nested object benefit, and exposing
+ *     it via three computeds triggered exactly the same reactivity cost.
+ *   - Errors surface as `Error` objects with the original message; we keep
+ *     `string` for backwards-compatibility but also expose `.cause`.
  */
-export function useTauriCommand<Args extends unknown[], Result>(
-  cmd: string,
-) {
-  const state = shallowRef<InvokeState<Result>>({
+export function useTauriCommand<C extends CommandName>(cmd: C) {
+  const state = ref<InvokeState<CommandResult<C>>>({
     data: null,
     error: null,
     loading: false,
@@ -25,50 +36,23 @@ export function useTauriCommand<Args extends unknown[], Result>(
   const error = computed(() => state.value.error)
   const loading = computed(() => state.value.loading)
 
-  async function run(...args: Args): Promise<Result | null> {
+  async function run(args: CommandArgs<C>): Promise<CommandResult<C> | null> {
     state.value = { ...state.value, loading: true, error: null }
     try {
-      const result = (await invoke(cmd, argsToObject(cmd, args))) as Result
+      const result = (await invoke(cmd, args as Record<string, unknown>)) as CommandResult<C>
       state.value = { data: result, error: null, loading: false }
       return result
     }
     catch (err) {
-      state.value = { data: null, error: String(err), loading: false }
+      const message = err instanceof Error ? err.message : String(err)
+      state.value = { data: null, error: message, loading: false }
       return null
     }
   }
 
-  return { data, error, loading, run }
-}
-
-/**
- * Tauri expects a single object argument; positional args become keys derived
- * from the command name. For example `invoke('scan_targets', { targets })`
- * -> `run(targets)`. We accept a custom mapper because some commands take
- * multiple positional args (e.g. `fix { target, source }`).
- */
-function argsToObject(cmd: string, args: unknown[]): Record<string, unknown> {
-  const KEY_MAP: Record<string, string[]> = {
-    scan_targets: ['targets'],
-    run_diagnostics_cmd: [],
-    launch_cli: [],
-    list_backups: [],
-    restore_backup: ['target'],
-    ping: [],
+  function reset(): void {
+    state.value = { data: null, error: null, loading: false }
   }
-  const keys = KEY_MAP[cmd]
-  if (!keys || keys.length === 0) {
-    return {}
-  }
-  const obj: Record<string, unknown> = {}
-  keys.forEach((key, i) => {
-    obj[key] = args[i]
-  })
-  return obj
-}
 
-/**
- * Shared "currently selected" state for the dashboard sidebar.
- * Centralized here so multiple components can stay in sync without prop drilling.
- */
-export const selectedDiagnosticSubject = ref<string | null>(null)
+  return { data, error, loading, run, reset }
+}

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useTauriCommand } from '~/composables/useTauriCommand'
 import type { Diagnostic } from '~/types/sysdll'
 import { t } from '~/i18n/zh-CN'
 
@@ -16,6 +17,22 @@ const SEVERITY_BADGE: Record<Diagnostic['severity'], string> = {
 
 const dependents = computed(() => props.diagnostic.dependents.slice(0, 20))
 const overflow = computed(() => Math.max(0, props.diagnostic.dependents.length - 20))
+
+const restoreCmd = useTauriCommand('restore_backup')
+
+// Audit-fix P1-12 / P2-14: the restore button is only enabled when the
+//   diagnostic has a concrete target on disk (anything else would silently
+//   fail at the Rust side). The Microsoft download placeholder stays
+//   disabled — it's a follow-up.
+const canRestore = computed(() => props.diagnostic.related_paths.length > 0)
+
+async function restoreBackup(): Promise<void> {
+  const target = props.diagnostic.related_paths[0]
+  if (!target) return
+  const ok = confirm(t.issueDetail.restoreConfirm(target))
+  if (!ok) return
+  await restoreCmd.run({ target: String(target) })
+}
 </script>
 
 <template>
@@ -81,11 +98,16 @@ const overflow = computed(() => Math.max(0, props.diagnostic.dependents.length -
     </section>
 
     <section class="border-t border-base pt-3 flex gap-2">
-      <button class="btn-action" disabled>
+      <button class="btn-action" disabled title="尚未实现">
         <div class="i-ph-download-simple-duotone" />
         {{ t.issueDetail.downloadMicrosoft }}
       </button>
-      <button class="btn-action" disabled>
+      <button
+        class="btn-action"
+        :disabled="!canRestore"
+        :title="canRestore ? '' : '需要先有相关文件路径'"
+        @click="restoreBackup"
+      >
         <div class="i-ph-floppy-disk-back-duotone" />
         {{ t.issueDetail.restoreBackup }}
       </button>

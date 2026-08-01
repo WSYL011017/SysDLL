@@ -12,11 +12,9 @@ import IssueDetail from '~/components/diagnose/IssueDetail.vue'
 import RepairLog from '~/components/repair/RepairLog.vue'
 import { t } from '~/i18n/zh-CN'
 
-useDark({
-  selector: 'html',
-  attribute: 'class',
-  valueDark: 'dark',
-})
+// Audit-fix P3-20: default `useDark` tracks system preference without a
+// hard-coded class swap, so SSR / preview / library-mode all behave.
+useDark()
 
 const scanStore = useScanStore()
 const repairStore = useRepairStore()
@@ -24,20 +22,35 @@ const selected = ref<string | null>(null)
 
 useCliStream((evt) => {
   repairStore.appendLog(evt)
+  // The store also keeps a live `scanProgress` ref; mirror the latest
+  //   tick into the scan store so ScanProgress.vue stays in sync (audit
+  //   fix R6/P1-1: this is the channel that was previously discarded).
+  if (evt.event === 'progress') {
+    scanStore.setProgress({
+      scanned: evt.scanned,
+      total: evt.total,
+      current: evt.current,
+    })
+  }
 })
 
-const launchCmd = useTauriCommand<[], number>('launch_cli')
+const launchCmd = useTauriCommand('launch_cli')
+const shutdownCmd = useTauriCommand('shutdown_cli')
 
 async function startRepair() {
   repairStore.cliRunning = true
-  await launchCmd.run()
+  await launchCmd.run({})
+}
+
+async function stopRepair() {
+  await shutdownCmd.run({})
 }
 
 watch(() => scanStore.diagnostics, (diags) => {
   if (!selected.value && diags.length) {
     selected.value = diags[0]!.subject
   }
-})
+}, { immediate: true })
 
 const selectedDiagnostic = computed(() => {
   if (!selected.value) return null
@@ -45,6 +58,11 @@ const selectedDiagnostic = computed(() => {
 })
 
 const stats = computed(() => scanStore.severityCount)
+
+// Audit-fix P2-5: ScanProgress used to render unconditionally because
+// `scanStore.progress.total` was a perpetually non-zero ref. Now we only
+// mount it when the back-end has actually pushed any data.
+const showProgress = computed(() => scanStore.scanning || scanStore.progress.total > 0)
 </script>
 
 <template>
@@ -63,18 +81,26 @@ const stats = computed(() => scanStore.severityCount)
       </div>
       <div class="flex items-center gap-4">
         <div class="hidden md:flex items-center gap-3 text-xs color-mute mono">
-          <span><span class="text-red-500">{{ stats.critical }}</span> {{ t.app.statCritical }}</span>
-          <span><span class="text-orange-500">{{ stats.error }}</span> {{ t.app.statError }}</span>
-          <span><span class="text-yellow-500">{{ stats.warning }}</span> {{ t.app.statWarn }}</span>
-          <span>{{ stats.info }} {{ t.app.statInfo }}</span>
+          <span><span class="text-red-500">{{ stats.critical }}</span> {{ t.severity.critical }}</span>
+          <span><span class="text-orange-500">{{ stats.error }}</span> {{ t.severity.error }}</span>
+          <span><span class="text-yellow-500">{{ stats.warning }}</span> {{ t.severity.warning }}</span>
+          <span>{{ stats.info }} {{ t.severity.info }}</span>
         </div>
         <button
+          v-if="!repairStore.cliRunning"
           class="btn-primary"
-          :disabled="repairStore.cliRunning"
           @click="startRepair"
         >
           <div class="i-ph-shield-check-duotone" />
           {{ t.app.startRepair }}
+        </button>
+        <button
+          v-else
+          class="btn-action"
+          @click="stopRepair"
+        >
+          <div class="i-ph-stop-circle-duotone" />
+          停止
         </button>
       </div>
     </header>
@@ -83,7 +109,7 @@ const stats = computed(() => scanStore.severityCount)
       <!-- 左侧：扫描控制 -->
       <aside class="col-span-3 border-r border-base p-4 flex flex-col gap-4 overflow-auto">
         <ScanTargetPicker @scan="scanStore.runScan" />
-        <ScanProgress v-if="scanStore.scanning || scanStore.progress.total" />
+        <ScanProgress v-if="showProgress" />
       </aside>
 
       <!-- 中部：问题列表 -->

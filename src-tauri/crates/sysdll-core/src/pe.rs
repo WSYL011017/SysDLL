@@ -17,6 +17,14 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
 
+// Audit fix P3-5: pin the IMAGE_FILE_MACHINE constants so reviewers and
+// fuzzers don't have to grep magic numbers back to the PE spec.
+const MACHINE_I386: u16 = 0x014C;
+const MACHINE_IA64: u16 = 0x0200;
+const MACHINE_AMD64: u16 = 0x8664;
+const MACHINE_ARM: u16 = 0x01C0;
+const MACHINE_AARCH64: u16 = 0xAA64;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum PeKind {
@@ -38,9 +46,14 @@ pub struct PeInfo {
 /// Read the raw file and parse its PE headers.
 ///
 /// Returns `Ok(None)` for non-PE files (e.g. plain `.txt`); callers can skip these.
+///
+/// Audit fix P3-7: previously this used `fs::metadata(path).map(|m| m.len()).unwrap_or(0)`,
+/// which silently swallowed the metadata error AND could disagree with the
+/// actual byte length (race between stat and read). We now use the bytes we
+/// just read so the size advertised in `PeInfo` matches the bytes analysed.
 pub fn analyze_path(path: &Path) -> Result<Option<PeInfo>> {
     let bytes = fs::read(path)?;
-    analyze_bytes(&bytes, fs::metadata(path).map(|m| m.len()).unwrap_or(0))
+    analyze_bytes(&bytes, bytes.len() as u64)
 }
 
 /// Analyze an in-memory PE blob.
@@ -112,22 +125,27 @@ fn collect_exports<'a>(file: &PeFile<'a>) -> Vec<String> {
 
 fn format_mach(mach: u16) -> String {
     match mach {
-        0x014C => "i386".into(),
-        0x0200 => "IA64".into(),
-        0x8664 => "x86_64".into(),
-        0x01C0 => "ARM".into(),
-        0xAA64 => "AArch64".into(),
+        MACHINE_I386 => "i386".into(),
+        MACHINE_IA64 => "IA64".into(),
+        MACHINE_AMD64 => "x86_64".into(),
+        MACHINE_ARM => "ARM".into(),
+        MACHINE_AARCH64 => "AArch64".into(),
         other => format!("unknown(0x{other:04X})"),
     }
 }
 
+/// Audit fix P3-6: drop the per-byte `format!` allocations in favor of a
+/// single-pass hex formatter.
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    let out = hasher.finalize();
-    let mut s = String::with_capacity(64);
-    for b in out {
-        s.push_str(&format!("{b:02x}"));
+    let digest = hasher.finalize();
+    let mut s = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        // Branch-free hex without alloc.
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        s.push(HEX[(byte >> 4) as usize] as char);
+        s.push(HEX[(byte & 0x0F) as usize] as char);
     }
     s
 }
@@ -148,5 +166,20 @@ mod tests {
         let bytes = b"MZ";
         let info = analyze_bytes(bytes, bytes.len() as u64).unwrap();
         assert!(info.is_none());
+    }
+
+    #[test]
+    fn sha256_hex_is_known_digest() {
+        // sha256("abc") == ba7816bf...f20015ad
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn format_mach_known_ids() {
+        assert_eq!(format_mach(MACHINE_AMD64), "x86_64");
+        assert_eq!(format_mach(0xDEAD), "unknown(0xDEAD)");
     }
 }
